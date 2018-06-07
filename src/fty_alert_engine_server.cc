@@ -39,6 +39,8 @@
 
 #define METRICS_STREAM "METRICS"
 #define RULES_SUBJECT "rfc-evaluator-rules"
+#define ALERT_SYS_TTL_RATIO 6 //factor applyed between METRICS TTL and ALERT_SYS TTL
+#define METRICS_TTL 60
 
 #include "fty_alert_engine_classes.h"
 
@@ -502,7 +504,7 @@ evaluate_metric(
 
             PureAlert alertToSend;
             rv = ac.updateAlert (rule, pureAlert, alertToSend);
-            alertToSend._ttl = triggeringMetric.getTtl () * 3;
+            alertToSend._ttl = triggeringMetric.getTtl () * ALERT_SYS_TTL_RATIO;
             if ( rv == -1 ) {
                 log_debug (" ### alert updated, nothing to send");
                 // nothing to send
@@ -576,8 +578,9 @@ fty_alert_engine_stream(
     log_info("Actor %s started",name);
     while (!zsys_interrupted) {
 
-        //clear cache every 30 sec
-        if (zclock_mono() - timeCash > 30000) {
+        //clear cache every 2*60 sec
+        if (zclock_mono() - timeCash > (ALERT_SYS_TTL_RATIO*METRICS_TTL/2)*1000) {
+            log_debug("it's time to remove oldest metrics from cache !!!!!!!");
             cache.removeOldMetrics();
             timeCash = zclock_mono();
         }
@@ -730,11 +733,20 @@ fty_alert_engine_stream(
                 continue;
             }
             log_debug("%s: Got message '%s' with value %s", name, topic.c_str(), value);
-
-            // Update cache with new value
+            
+              // Update cache with new value
             MetricInfo m (name, type, unit, dvalue, timestamp, "", ttl);
+            
+            //compare the current value with the cached value
+            double cached_dvalue = cache.findAndCheck(m.generateTopic(), ALERT_SYS_TTL_RATIO/2);
+            if(!std::isnan (cached_dvalue) && cached_dvalue==dvalue){
+                //as the value has not yet change, ignore it
+                log_debug("%s: Got message '%s' with same value as cache, ignore message", name, topic.c_str());
+                fty_proto_destroy (&bmessage);
+                continue;
+            }
             cache.addMetric (m);
-
+           
             //search if this metric is already evaluated and if this metric is evaluate
             std::map < std::string, bool>::iterator found = evaluateMetrics.find (m.generateTopic());
             bool metricfound = found != evaluateMetrics.end();
@@ -1114,7 +1126,7 @@ fty_alert_engine_server_test(
         zmsg_destroy (&recv);
         //Test case #5: generate alert - below the treshold
         zmsg_t *m = fty_proto_encode_metric (
-            NULL, ::time (NULL), 0, "abc", "fff", "20", "X");
+            NULL, ::time (NULL), 10, "abc", "fff", "20", "X");
         mlm_client_send (producer, "abc@fff", &m);
 
         recv = mlm_client_recv (consumer);
@@ -1129,7 +1141,7 @@ fty_alert_engine_server_test(
 
         // Test case #6: generate alert - resolved
         m = fty_proto_encode_metric (
-                NULL, time (NULL), 0, "abc", "fff", "42", "X");
+                NULL, time (NULL), 10, "abc", "fff", "42", "X");
         mlm_client_send (producer, "abc@fff", &m);
 
         recv = mlm_client_recv (consumer);
@@ -1142,7 +1154,7 @@ fty_alert_engine_server_test(
         fty_proto_destroy (&brecv);
         // Test case #6: generate alert - high warning
         m = fty_proto_encode_metric (
-                NULL, time (NULL), 0, "abc", "fff", "52", "X");
+                NULL, time (NULL), 10, "abc", "fff", "52", "X");
         mlm_client_send (producer, "abc@fff", &m);
 
         recv = mlm_client_recv (consumer);
@@ -1158,7 +1170,7 @@ fty_alert_engine_server_test(
         fty_proto_destroy (&brecv);
         // Test case #7: generate alert - high critical
         m = fty_proto_encode_metric (
-                NULL, time (NULL), 0, "abc", "fff", "62", "X");
+                NULL, time (NULL), 10, "abc", "fff", "62", "X");
         mlm_client_send (producer, "abc@fff", &m);
 
         recv = mlm_client_recv (consumer);
@@ -1174,7 +1186,7 @@ fty_alert_engine_server_test(
         fty_proto_destroy (&brecv);
         // Test case #8: generate alert - resolved again
         m = fty_proto_encode_metric (
-                NULL, time (NULL), 0, "abc", "fff", "42", "X");
+                NULL, time (NULL), 10, "abc", "fff", "42", "X");
         mlm_client_send (producer, "abc@fff", &m);
 
         recv = mlm_client_recv (consumer);
@@ -1189,7 +1201,7 @@ fty_alert_engine_server_test(
         fty_proto_destroy (&brecv);
         // Test case #9: generate alert - high again
         m = fty_proto_encode_metric (
-                NULL, time (NULL), 0, "abc", "fff", "62", "X");
+                NULL, time (NULL), 10, "abc", "fff", "62", "X");
         mlm_client_send (producer, "abc@fff", &m);
 
         recv = mlm_client_recv (consumer);
@@ -1205,7 +1217,7 @@ fty_alert_engine_server_test(
         fty_proto_destroy (&brecv);
         // Test case #11: generate alert - high again
         m = fty_proto_encode_metric (
-                NULL, time (NULL), 0, "abc", "fff", "62", "X");
+                NULL, time (NULL), 10, "abc", "fff", "72", "X");
         mlm_client_send (producer, "abc@fff", &m);
 
         recv = mlm_client_recv (consumer);
@@ -1220,7 +1232,7 @@ fty_alert_engine_server_test(
         fty_proto_destroy (&brecv);
         // Test case #12: generate alert - resolved
         m = fty_proto_encode_metric (
-                NULL, time (NULL), 0, "abc", "fff", "42", "X");
+                NULL, time (NULL), 10, "abc", "fff", "42", "X");
         mlm_client_send (producer, "abc@fff", &m);
 
         recv = mlm_client_recv (consumer);
@@ -1346,7 +1358,7 @@ fty_alert_engine_server_test(
         zmsg_destroy (&recv);
         // #13.2 evaluate metric
         zmsg_t *m = fty_proto_encode_metric (
-               NULL, ::time (NULL), ::time (NULL), "status.ups", "5PX1500-01", "1032.000", "");
+               NULL, ::time (NULL), 10, "status.ups", "5PX1500-01", "1032.000", "");
         mlm_client_send (producer, "status.ups@5PX1500-01", &m);
     }
 
@@ -1394,7 +1406,7 @@ fty_alert_engine_server_test(
 
         // Test case #15.2: evaluate it
         zmsg_t *m = fty_proto_encode_metric (
-                NULL, ::time (NULL), ::time (NULL), "status.ups", "ROZ.UPS33", "42.00", "");
+                NULL, ::time (NULL), 10, "status.ups", "ROZ.UPS33", "42.00", "");
         mlm_client_send (producer, "status.ups@ROZ.UPS33", &m);
 
         recv = mlm_client_recv (consumer);
@@ -1410,8 +1422,11 @@ fty_alert_engine_server_test(
         fty_proto_destroy (&brecv);
 
         // Test case #15.3: evaluate it again
+        //waiting cache is cleaned 
+        log_debug("waiting old metrics removed from cache for %ds ..",(ALERT_SYS_TTL_RATIO*METRICS_TTL/2)+5);
+        zclock_sleep (((ALERT_SYS_TTL_RATIO*METRICS_TTL/2) +5)* 1000);
         m = fty_proto_encode_metric (
-                NULL, ::time (NULL), ::time (NULL), "status.ups", "ROZ.UPS33", "42.00", "");
+                NULL, ::time (NULL), 10, "status.ups", "ROZ.UPS33", "42.00", "");
         mlm_client_send (producer, "status.ups@ROZ.UPS33", &m);
 
         recv = mlm_client_recv (consumer);
@@ -1786,7 +1801,7 @@ fty_alert_engine_server_test(
 
         // 24.2.1.1 there exists ACTIVE alert (as there were no alerts, lets create one :)); send metric
         zmsg_t *m = fty_proto_encode_metric (
-                NULL, ::time (NULL), 0, "metrictouch", "assettouch", "10", "X");
+                NULL, ::time (NULL), 10, "metrictouch", "assettouch", "10", "X");
         assert (m);
         rv = mlm_client_send (producer, "metrictouch@assettouch", &m);
         assert ( rv == 0 );
@@ -1906,7 +1921,7 @@ fty_alert_engine_server_test(
 
         // 25.3.1 Generate alert on the First rule; send metric
         zmsg_t *m = fty_proto_encode_metric (
-                NULL, ::time (NULL), 0, "metrictouch1", "element1", "100", "X");
+                NULL, ::time (NULL), 10, "metrictouch1", "element1", "100", "X");
         assert (m);
         int rv = mlm_client_send (producer, "metrictouch1@element1", &m);
         assert ( rv == 0 );
@@ -1925,7 +1940,7 @@ fty_alert_engine_server_test(
 
         // 25.4.1 Generate alert on the Second rule; send metric
         m = fty_proto_encode_metric (
-                NULL, ::time (NULL), 0, "metrictouch2", "element2", "80", "X");
+                NULL, ::time (NULL), 10, "metrictouch2", "element2", "80", "X");
         assert (m);
         rv = mlm_client_send (producer, "metrictouch2@element2", &m);
         assert ( rv == 0 );
@@ -2007,6 +2022,7 @@ fty_alert_engine_server_test(
         int rv = mlm_client_send (asset_producer, "datacenter.@test", &m);
         assert ( rv == 0 );
 
+        log_debug("waiting 20 sec..");
         zclock_sleep (20000);
 
         char *average_humidity = s_readall ((str_SELFTEST_DIR_RW + "/average.humidity@test.rule").c_str());
@@ -2023,7 +2039,7 @@ fty_alert_engine_server_test(
         zstr_free (&average_humidity);
         zstr_free (&average_temperature);
         // # 26.2 force an alert
-        int ttl = 60;
+        int ttl = METRICS_TTL;
         m = fty_proto_encode_metric (
             NULL, ::time (NULL), ttl, "average.temperature", "test", "1000", "C");
         assert (m);
@@ -2044,7 +2060,7 @@ fty_alert_engine_server_test(
         fty_proto_destroy (&brecv);
     }
 
-    // # 27.1 update the created asset, check that we have the rules, wait for 3*ttl,
+    // # 27.1 update the created asset, check that we have the rules, wait for ALERT_SYS_TTL_RATIO*ttl,
     // refresh the metric, check that we still have the alert
     {
         zhash_t *aux2 = zhash_new ();
@@ -2060,6 +2076,7 @@ fty_alert_engine_server_test(
         int rv = mlm_client_send (asset_producer, "row.@test", &m);
         assert ( rv == 0 );
 
+        log_debug("waiting 20 sec..");
         zclock_sleep (20000);
 
         char *average_humidity = s_readall ((str_SELFTEST_DIR_RW + "/average.humidity@test.rule").c_str());
@@ -2074,8 +2091,9 @@ fty_alert_engine_server_test(
         phase_imbalance = s_readall ((str_SELFTEST_DIR_RW + "/phase.imbalance@test.rule").c_str());
         assert (realpower_default == NULL && phase_imbalance == NULL); */
 
-        int ttl = 60;
-        zclock_sleep (3 * ttl);
+        int ttl = METRICS_TTL;
+        log_debug("waiting old metrics removed from cache for %ds ..",(ALERT_SYS_TTL_RATIO*METRICS_TTL/2)+5);
+        zclock_sleep (((ALERT_SYS_TTL_RATIO*METRICS_TTL/2) +5)* 1000);
         m = fty_proto_encode_metric (
             NULL, ::time (NULL), ttl, "average.temperature", "test", "1000", "C");
         assert (m);
@@ -2090,9 +2108,7 @@ fty_alert_engine_server_test(
         assert (streq (fty_proto_name (brecv), "test"));
         assert (streq (fty_proto_state (brecv), "ACTIVE"));
         assert (streq (fty_proto_severity (brecv), "CRITICAL"));
-        if (verbose) {
-            log_debug ("Alert was sent: SUCCESS");
-        }
+        log_debug ("Alert was sent: SUCCESS");
         fty_proto_destroy (&brecv);
     }
 
@@ -2114,7 +2130,7 @@ fty_alert_engine_server_test(
 
     poller = zpoller_new (mlm_client_msgpipe (consumer), NULL);
     assert (poller);
-    which = zpoller_wait (poller, 3*ttl2);
+    which = zpoller_wait (poller, ALERT_SYS_TTL_RATIO*ttl2);
     assert ( which != NULL );
     recv = mlm_client_recv (consumer);
     assert ( recv != NULL );
@@ -2214,7 +2230,7 @@ fty_alert_engine_server_test(
 
     poller = zpoller_new (mlm_client_msgpipe (consumer), NULL);
     assert (poller);
-    which = zpoller_wait (poller, 3*ttl4);
+    which = zpoller_wait (poller, ALERT_SYS_TTL_RATIO*ttl4);
     assert ( which != NULL );
     recv = mlm_client_recv (consumer);
     assert ( recv != NULL );
@@ -2259,7 +2275,7 @@ fty_alert_engine_server_test(
         fty_proto_t *brecv = fty_proto_decode (&recv);
         fty_proto_destroy (&brecv);
     }
-
+    log_debug("waiting 3 sec..");
     zclock_sleep (3000);
     zactor_destroy (&ag_configurator);
     zactor_destroy (&ag_server_stream);

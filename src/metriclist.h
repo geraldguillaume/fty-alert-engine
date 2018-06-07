@@ -73,7 +73,23 @@ public:
      *         value - otherwise
      */
     double findAndCheck (const std::string &topic) const;
-
+    /*
+     * \brief Finds a value of the metric in the list and checks if
+     *        it is still valid.
+     *
+     * This method doesn't remove metric from the list if it is too old.
+     * To check is value is NAN or not use isnan() function from math.h
+     *
+     * \param[in] topic - topic we are looking fo
+     * \param[in] ttl_ratio - TTL ratio between metrics and SYS_ALARMS
+     *
+     * \return NAN   - if metric is too old or
+     *                  it is not present in the list
+     *         value - otherwise
+     */
+    double findAndCheck (const std::string &topic, uint ttl_ratio) const;
+    
+    
     /*
      * \brief Finds a value of the metric in the list
      *

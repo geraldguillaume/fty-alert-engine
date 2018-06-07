@@ -59,6 +59,24 @@ double MetricList::
     }
 }
 
+double MetricList::
+    findAndCheck (const std::string &topic, uint ttl_ratio) const
+{
+    auto it = _knownMetrics.find(topic);
+    if ( it == _knownMetrics.cend() ) {
+        return NAN;
+    }
+    else {
+        uint64_t currentTimestamp = ::time(NULL);
+        if ( ( currentTimestamp - it->second._timestamp ) > ttl_ratio*it->second._ttl ) {
+            return NAN;
+        }
+        else {
+            return it->second._value;
+        }
+    }
+}
+
 
 double MetricList::
     find (const std::string &topic) const
