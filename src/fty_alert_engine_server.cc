@@ -606,6 +606,7 @@ fty_alert_engine_stream(
         std::string subject;
 
         while (which == mlm_client_msgpipe(client)) {
+            if(zsys_interrupted)goto exit; 
             zmsg_t *zmsg = mlm_client_recv(client);
             std::string topic = mlm_client_subject(client);
 
@@ -703,6 +704,7 @@ fty_alert_engine_stream(
 
         // process accumulated stream messages
         for (auto element : stream_messages) {
+            if(zsys_interrupted)goto exit;
             std::string topic = element.first;
             fty_proto_t *bmessage = element.second;
 
